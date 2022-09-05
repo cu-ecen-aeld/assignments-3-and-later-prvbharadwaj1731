@@ -15,8 +15,15 @@ int main(int argc, char *argv[])
 	if(argc != 3){
 		syslog(LOG_ERR, "Wrong number of arguments provided. Exiting...\n");
 		perror("Wrong number of arguments provided. Exiting...\n");
-		exit(1);
-//		return(1);
+//		exit(1);
+		return(1);
+	}
+	
+	if(argv[2] == ""){
+		syslog(LOG_ERR, "Input string not specified. Exiting...\n");
+		perror("Input string not specified. Exiting...\n");
+//		exit(1);
+		return(1);
 	}
 	
 	//try opening file specified in argument
@@ -24,8 +31,8 @@ int main(int argc, char *argv[])
 	if(fd == NULL){
 		syslog(LOG_ERR, "Error opening file. Exiting...\n");
 		perror("Error opening file. Exiting...\n");
-		exit(1);
-//		return(1);
+//		exit(1);
+		return(1);
 	}	
 	syslog(LOG_DEBUG, "Writing %s to %s\n", argv[2], argv[1]);
 	
