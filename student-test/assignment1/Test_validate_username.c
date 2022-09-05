@@ -1,6 +1,7 @@
 #include "unity.h"
 #include <stdbool.h>
 #include <stdlib.h>
+#include <stdio.h>
 #include "../../examples/autotest-validate/autotest-validate.h"
 #include "../../assignment-autotest/test/assignment1/username-from-conf-file.h"
 
@@ -23,5 +24,6 @@ void test_validate_my_username()
     const char *actual_string = malloc_username_from_conf_file(); //receive username from malloc_username
     
     TEST_ASSERT_EQUAL_STRING_MESSAGE(expected_string, actual_string, "Username matches");
+    free(actual_string);
     //TEST_ASSERT_TRUE_MESSAGE(false,"AESD students, please fix me!");
 }
