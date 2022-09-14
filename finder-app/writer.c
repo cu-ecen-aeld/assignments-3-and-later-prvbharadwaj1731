@@ -19,12 +19,12 @@ int main(int argc, char *argv[])
 		return(1);
 	}
 	
-	if(argv[2] == ""){
+	/*if(argv[2] == ""){
 		syslog(LOG_ERR, "Input string not specified. Exiting...\n");
 		perror("Input string not specified. Exiting...\n");
 //		exit(1);
 		return(1);
-	}
+	}*/
 	
 	//try opening file specified in argument
 	fd= fopen(argv[1], "w+");

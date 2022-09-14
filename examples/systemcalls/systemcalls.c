@@ -1,4 +1,13 @@
 #include "systemcalls.h"
+#include <stdlib.h>
+#include <stdio.h>
+#include "string.h"
+#include <sys/types.h>
+#include <sys/stat.h>
+#include <sys/wait.h>
+#include <unistd.h>
+#include <fcntl.h>
+#include <errno.h>
 
 /**
  * @param cmd the command to execute with system()
@@ -16,7 +25,11 @@ bool do_system(const char *cmd)
  *   and return a boolean true if the system() call completed with success
  *   or false() if it returned a failure
 */
-
+    int system_call_return;
+    system_call_return = system(cmd);
+    if(system_call_return == -1){
+    	return false;
+    }
     return true;
 }
 
@@ -47,7 +60,7 @@ bool do_exec(int count, ...)
     command[count] = NULL;
     // this line is to avoid a compile warning before your implementation is complete
     // and may be removed
-    command[count] = command[count];
+    //command[count] = command[count];
 
 /*
  * TODO:
@@ -57,10 +70,32 @@ bool do_exec(int count, ...)
  *   (first argument to execv), and use the remaining arguments
  *   as second argument to the execv() command.
  *
-*/
-
-    va_end(args);
-
+ 
+*/  
+    
+    
+    pid_t pid;
+    int status;
+    
+    pid = fork();
+    if(pid == -1)
+    	return -1; //failed to fork
+    else if(pid == 0){
+    	execv(command[0], command);
+    	exit(-1);
+    }
+    if(waitpid(pid, &status, 0) == -1)
+    	return false;
+    else if (WIFEXITED(status)){
+    	int exit_status = WEXITSTATUS(status); 
+    	if(exit_status == status)
+    		return true;
+    	else
+    		return false;    	
+    }	
+    
+    va_end(args);    
+    
     return true;
 }
 
@@ -82,8 +117,40 @@ bool do_exec_redirect(const char *outputfile, int count, ...)
     command[count] = NULL;
     // this line is to avoid a compile warning before your implementation is complete
     // and may be removed
-    command[count] = command[count];
-
+    //command[count] = command[count];    
+    
+    int pid, fd, status;
+    
+    //Check if the outputfile path provided exists and opens
+    fd = open(outputfile, O_WRONLY|O_TRUNC|O_CREAT, 0644); //opens the file specified by argument 'outputfile' with rwx permissions for user, and rx permissions for group and others
+    if(fd<0){
+    	perror("Unable to open file. Exiting...");
+    	abort();
+    }
+    //replace stdout with file provided. stdout has fd = 1
+    dup2(fd, 1);
+    
+    pid = fork();
+    if(pid == -1)
+    	return -1; //failed to fork
+    else if(pid == 0){
+    	execv(command[0], command);
+    	exit(-1);
+    }
+    if(waitpid(pid, &status, 0) == -1)
+    	return false;
+    else if (WIFEXITED(status)){
+    	int exit_status = WEXITSTATUS(status); 
+    	if(exit_status == status)
+    		return true;
+    	else
+    		return false;    	
+    }  	
+    
+    va_end(args);    
+    
+    return true;
+    
 
 /*
  * TODO
@@ -93,7 +160,4 @@ bool do_exec_redirect(const char *outputfile, int count, ...)
  *
 */
 
-    va_end(args);
-
-    return true;
 }
