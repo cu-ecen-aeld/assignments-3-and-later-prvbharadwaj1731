@@ -8,7 +8,10 @@ set -u
 NUMFILES=10
 WRITESTR=AELD_IS_FUN
 WRITEDIR=/tmp/aeld-data
-username=$(cat conf/username.txt)
+# Modification for assignment-4-part-2. The new path represents the directory path on QEMU machine
+OUTPUT_DIR=/tmp/assignment-4-result.txt
+username=$(cat /etc/finder-app/conf/username.txt)
+#username=$(cat conf/username.txt)
 
 if [ $# -lt 2 ]
 then
@@ -48,10 +51,13 @@ fi
 for i in $( seq 1 $NUMFILES)
 do
 #	./writer.sh "$WRITEDIR/${username}$i.txt" "$WRITESTR"
-	./writer "$WRITEDIR/${username}$i.txt" "$WRITESTR"
+	writer "$WRITEDIR/${username}$i.txt" "$WRITESTR"
 done
 
 OUTPUTSTRING=$(./finder.sh "$WRITEDIR" "$WRITESTR")
+
+#finder-test output to be written to tmp/assignment4-result.txt
+echo ${OUTPUTSTRING} > ${OUTPUT_DIR}
 
 set +e
 echo ${OUTPUTSTRING} | grep "${MATCHSTR}"
