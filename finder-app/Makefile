@@ -15,9 +15,10 @@
 	
 	
 CROSS_COMPILE = 
+CC=$(CROSS_COMPILE)gcc
 
 all: writer.c 
-	$(CROSS_COMPILE)gcc -Wall -Werror writer.c -o writer
+	$(CC) -Wall -Werror writer.c -o writer
 	
 clean:
 	rm -rf *.o writer
