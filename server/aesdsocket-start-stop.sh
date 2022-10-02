@@ -5,7 +5,7 @@
 
 case "$1" in 
     start) 
-        echo "Starting aesdsocket at port 9000" 
+        echo "Starting aesdsocket at port 9000. Test message" 
         start-stop-daemon -S -n aesdsocket -a /usr/bin/aesdsocket -- -d 
         ;; 
     stop) 

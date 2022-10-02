@@ -34,6 +34,7 @@ void signal_handler(int sig) {
   if (sig == SIGINT || sig == SIGTERM) {
     syslog(LOG_INFO, "Caught signal. Exiting...");
     graceful_exit_handler = true;
+    exit(0);
   }
 }
 
