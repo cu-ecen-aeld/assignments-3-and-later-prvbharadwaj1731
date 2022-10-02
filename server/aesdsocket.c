@@ -74,13 +74,13 @@ void managesocket(int socket_t) {
       struct sockaddr_in * addr_in = (struct sockaddr_in * ) & client_addr;
       inet_ntop(AF_INET, & (addr_in -> sin_addr), addr, INET_ADDRSTRLEN);
       syslog(LOG_INFO, "Accepted connection from %s", addr);
-      printf("Accepted connection from %s\n", addr");
+      printf("Accepted connection from %s\n", addr);
     } else if (client_addr.ss_family == AF_INET6) {
       char addr[INET6_ADDRSTRLEN];
       struct sockaddr_in6 * addr_in6 = (struct sockaddr_in6 * ) & client_addr;
       inet_ntop(AF_INET6, & (addr_in6 -> sin6_addr), addr, INET6_ADDRSTRLEN);
       syslog(LOG_INFO, "Accepted connection from %s", addr);
-      printf("Accepted connection from %s\n", addr");
+      printf("Accepted connection from %s\n", addr);
     }
 
     //Wait for data
