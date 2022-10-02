@@ -41,6 +41,7 @@ void managesocket(int socket_t) {
   int listen_ret = listen(socket_t, 10);
   if (listen_ret == -1) { //keep socket size 10 to listen for 10 incoming connections in queue
     syslog(LOG_ERR, "Error occured while listening to socket = %s. Exiting...", strerror(errno));
+    printf("Error occured while listening to socket = %s. Exiting...", strerror(errno));
     exit(-1);
   }
 
@@ -96,7 +97,7 @@ void managesocket(int socket_t) {
         syslog(LOG_ERR, "Error occured while reading from socket = %s. Exiting...", strerror(errno));
         exit(-1);
       }
-      printf("Received data = %s\n", &recv_data[recv_idx]);
+//      printf("Received data = %s\n", &recv_data[recv_idx]);
       recv_idx += recv_ret;
 
       if (recv_idx != 0) {
@@ -229,9 +230,9 @@ int main(int argc, char ** argv) {
   struct addrinfo hints;
   struct addrinfo * result;
   memset( & hints, 0, sizeof(struct addrinfo));
-  hints.ai_family = AF_UNSPEC; //chose any protocol as system sees fit
+  hints.ai_family = AF_INET; //chose any protocol as system sees fit
   hints.ai_socktype = SOCK_STREAM; //chose TCP
-  if (getaddrinfo("localhost", "9000", & hints, & result) != 0) {
+  if (getaddrinfo(NULL, "9000", & hints, & result) != 0) {
     syslog(LOG_ERR, "Error occured during socket setup = %s. Exiting...", strerror(errno));
     exit(-1);
   }
@@ -241,6 +242,16 @@ int main(int argc, char ** argv) {
     syslog(LOG_ERR, "Error occured during starting socket = %s. Exiting...", strerror(errno));
     exit(-1);
   }
+ 
+// Handling the resue of port
+  int yes = 1;
+  if(setsockopt(socket_t, SOL_SOCKET, SO_REUSEADDR, &yes, sizeof(yes)) < 0)
+  {
+    printf("setsockopt error\n");
+    syslog(LOG_ERR, "setsockopt %s\n\r", strerror(errno));
+    exit(-1);
+  }
+
 
   //bind socket
   if (bind(socket_t, result -> ai_addr, result -> ai_addrlen) == -1) {
