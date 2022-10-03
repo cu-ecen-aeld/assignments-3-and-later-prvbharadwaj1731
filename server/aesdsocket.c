@@ -48,7 +48,7 @@ void managesocket(int socket_t) {
   syslog(LOG_INFO, "Listening on port 9000");
 
   //Create the file that will log the messages received
-  int log_fd = open(LOGFILE_PATH, O_CREAT | O_RDWR | O_TRUNC, 0766);
+  int log_fd = open(LOGFILE_PATH, O_CREAT | O_RDWR | O_TRUNC, 0777);
   if (log_fd == -1) {
     syslog(LOG_ERR, "****************file pointer log_fd = %d", log_fd);
     syslog(LOG_ERR, "****************LOGFILE_PATH = %s", LOGFILE_PATH);
