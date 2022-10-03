@@ -50,7 +50,9 @@ void managesocket(int socket_t) {
   //Create the file that will log the messages received
   int log_fd = open(LOGFILE_PATH, O_CREAT | O_RDWR | O_TRUNC, 0766);
   if (log_fd == -1) {
-    syslog(LOG_ERR, "Error creating logfile =  %s. Exiting...", strerror(errno));
+    syslog(LOG_ERR, "****************file pointer log_fd = %d", log_fd);
+    syslog(LOG_ERR, "****************LOGFILE_PATH = %s", LOGFILE_PATH);
+    syslog(LOG_ERR, "****************Error creating logfile =  %s. Exiting...", strerror(errno));
     exit(-1);
   }
 
@@ -305,7 +307,7 @@ int main(int argc, char ** argv) {
       }
 
       //redirect stdout
-      dup(0);
+      //dup(0);
       managesocket(socket_t);
       exit(0);
     }
