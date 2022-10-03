@@ -237,7 +237,8 @@ int main(int argc, char ** argv) {
   struct addrinfo hints;
   struct addrinfo * result;
   memset( & hints, 0, sizeof(struct addrinfo));
-  hints.ai_family = AF_INET; //chose any protocol as system sees fit
+  hints.ai_family = AF_INET;
+  hints.ai_flags = AI_PASSIVE; //chose any protocol as system sees fit
   hints.ai_socktype = SOCK_STREAM; //chose TCP
   if (getaddrinfo(NULL, "9000", & hints, & result) != 0) {
     syslog(LOG_ERR, "Error occured during socket setup = %s. Exiting...", strerror(errno));
