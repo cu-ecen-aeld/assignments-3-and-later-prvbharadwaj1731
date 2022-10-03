@@ -42,7 +42,6 @@ void managesocket(int socket_t) {
   int listen_ret = listen(socket_t, 10);
   if (listen_ret == -1) { //keep socket size 10 to listen for 10 incoming connections in queue
     syslog(LOG_ERR, "Error occured while listening to socket = %s. Exiting...", strerror(errno));
-    printf("Error occured while listening to socket = %s. Exiting...", strerror(errno));
     exit(-1);
   }
 
@@ -56,6 +55,8 @@ void managesocket(int socket_t) {
   }
 
   int file_size = 0;
+  char *recv_data = NULL;
+  
   while (graceful_exit_handler == false) {
 
     struct sockaddr_storage client_addr;
@@ -88,7 +89,11 @@ void managesocket(int socket_t) {
     //Wait for data
     int recv_ret;
     //Start with a size, potentially incresing it if an entire packet cannot fit into it
-    char * recv_data = malloc(sizeof(char) * BUFFER_SIZE);
+    recv_data = malloc(sizeof(char) * BUFFER_SIZE);
+    if(!recv_data){
+    	syslog(LOG_ERR, "Error occured during malloc = %s. Exiting...", strerror(errno));
+    	exit(-1);
+    }
     int recv_idx = 0;
     //How many 'BUFFER_SIZE' receive_blocks "recv_data" we have received from client till now
     int receive_blocks = 1;
@@ -114,6 +119,7 @@ void managesocket(int socket_t) {
           char * write_ptr = recv_data;
           while (write_len != 0) {
             write_byte_ret = write(log_fd, write_ptr, write_len);
+            
             if (write_byte_ret == -1) {
               if (errno == EINTR)
                 continue;
@@ -244,12 +250,11 @@ int main(int argc, char ** argv) {
     exit(-1);
   }
  
-// Handling the resue of port
+// Handling port reuse
   int yes = 1;
-  if(setsockopt(socket_t, SOL_SOCKET, SO_REUSEADDR, &yes, sizeof(yes)) < 0)
+  if(setsockopt(socket_t, SOL_SOCKET, SO_REUSEADDR, &yes, sizeof(yes)) == -1)
   {
-    printf("setsockopt error\n");
-    syslog(LOG_ERR, "setsockopt %s\n\r", strerror(errno));
+    syslog(LOG_ERR, "Error occured during setsockopt = %s. Exiting...", strerror(errno));
     exit(-1);
   }
 
