@@ -2,9 +2,6 @@
 #References: 
 # 1) https://man7.org/linux/man-pages/man8/start-stop-daemon.8.html 
 # 2) https://gist.github.com/RichardBronosky/b037de3e8763887b034298057200bd02
-
-#!/bin/sh
-
 usage() {
 	echo "Command: $0 <start/stop>"
 	echo "Functionality: starts/stops the aesdsocket daemon."
