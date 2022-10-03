@@ -252,12 +252,12 @@ int main(int argc, char ** argv) {
   }
  
 // Handling port reuse
-  int yes = 1;
-  if(setsockopt(socket_t, SOL_SOCKET, SO_REUSEADDR, &yes, sizeof(yes)) == -1)
-  {
-    syslog(LOG_ERR, "Error occured during setsockopt = %s. Exiting...", strerror(errno));
-    exit(-1);
-  }
+//  int yes = 1;
+//  if(setsockopt(socket_t, SOL_SOCKET, SO_REUSEADDR, &yes, sizeof(yes)) == -1)
+//  {
+//    syslog(LOG_ERR, "Error occured during setsockopt = %s. Exiting...", strerror(errno));
+//    exit(-1);
+//  }
 
 
   //bind socket
