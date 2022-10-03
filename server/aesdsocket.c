@@ -257,8 +257,8 @@ int main(int argc, char ** argv) {
 
   //Create socket struct
   struct addrinfo hints;
-  struct addrinfo * result;
-  memset( & hints, 0, sizeof(struct addrinfo));
+  struct addrinfo *result;
+  memset(&hints, 0, sizeof(struct addrinfo));
   hints.ai_family = AF_INET; //chose any protocol as system sees fit
   hints.ai_socktype = SOCK_STREAM; //chose TCP
   if (getaddrinfo(NULL, "9000", &hints, &result) != 0) {
@@ -273,12 +273,12 @@ int main(int argc, char ** argv) {
   }
  
 // Handling port reuse
-  int yes = 1;
-  if(setsockopt(socket_t, SOL_SOCKET, SO_REUSEADDR, &yes, sizeof(yes)) == -1)
-  {
-    syslog(LOG_ERR, "Error occured during setsockopt = %s. Exiting...", strerror(errno));
-    exit(-1);
-  }
+//  int yes = 1;
+//  if(setsockopt(socket_t, SOL_SOCKET, SO_REUSEADDR, &yes, sizeof(yes)) == -1)
+//  {
+//    syslog(LOG_ERR, "Error occured during setsockopt = %s. Exiting...", strerror(errno));
+//    exit(-1);
+//  }
 
 
   //bind socket
