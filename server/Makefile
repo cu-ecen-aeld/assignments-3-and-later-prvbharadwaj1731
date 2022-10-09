@@ -2,10 +2,14 @@ INCLUDES = ./aesdsocket.c
 OUTPUT = ./aesdsocket
 
 CROSS_COMPILE=
-CC=$(CROSS_COMPILE)gcc
+CC?=$(CROSS_COMPILE)gcc
+CFLAGS?= -g -Wall -Werror
+LDFLAGS?= -pthread -lrt
 
-all: $(INCLUDES)
-	$(CC) -Wall -Werror -g $(INCLUDES) -o $(OUTPUT) -lrt -lpthread
+all: aesdsocket
+
+aesdsocket: $(INCLUDES)
+	$(CC) &(CFLAGS) $^ -o $@ $(INCLUDES) $(LDFLAGS)
 	
 clean:
 	rm -f $(OUTPUT)
