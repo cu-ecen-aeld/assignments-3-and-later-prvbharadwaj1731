@@ -17,8 +17,17 @@
 #include <time.h>
 
 #define     QUEUE_LENGTH    (10)
-#define     LOGFILE_PATH  ("/var/tmp/aesdsocketdata")
 #define     BUFFER_SIZE   (1024)
+#define     USE_AESD_CHAR_DEVICE
+
+#ifdef USE_AESD_CHAR_DEVICE
+#define LOGFILE_PATH ("/dev/aesdchar")
+#else
+#define     LOGFILE_PATH  ("/var/tmp/aesdsocketdata")
+#endif
+
+
+
 
 struct thread_t
 {
@@ -53,6 +62,9 @@ void signal_handler(int sig)
        graceful_exit_handle = true;
     }
 }
+
+
+#ifdef USE_AESD_CHAR_DEVICE
 
 //Handles printing timestamp every 10 seconds
 void timestamp_handler(int sig_id)
@@ -120,6 +132,7 @@ mutex_release:
     }
 }
 
+#endif
 
 //Print IP address of client whose connection is accepted
 void accept_connection(struct sockaddr_storage client_address)
@@ -347,6 +360,7 @@ void manage_socket(int socket_t)
         goto exit_socket_t;  
     }
 
+#ifdef USE_AESD_CHAR_DEVICE
     //Create an interval timer for timestamp generation
     struct itimerspec interval_10sec;
 	struct itimerspec previous_interval_time;
@@ -385,6 +399,7 @@ void manage_socket(int socket_t)
         syslog(LOG_ERR, "Error occured in timer_settime() = %s. Exiting...", strerror(errno));
         goto exit_filesocket_t; 
     }
+#endif
 
     //singly linked list setup
     SLIST_HEAD(head_s, thread_t) head;
