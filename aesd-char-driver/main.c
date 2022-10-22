@@ -126,7 +126,7 @@ ssize_t aesd_write(struct file *filp, const char __user *buf, size_t count,
     const char *free_ptr = NULL;
 
     //check validity of input data
-    if(!filp || !buf){]
+    if(!filp || !buf){
         PDEBUG ("Error occured with input data to aesd_write. Exiting...\n");
     }
     if(!count){
