@@ -19,12 +19,12 @@
 
 #define     QUEUE_LENGTH    (10)
 #define     BUFFER_SIZE   (1024)
-#define     USE_AESD_CHAR_DEVICE
+#define     USE_AESD_CHAR_DEVICE 1
 
 #ifdef USE_AESD_CHAR_DEVICE
 #define LOGFILE_PATH ("/dev/aesdchar")
 #else
-#define     LOGFILE_PATH  ("/var/tmp/aesdsocketdata")
+#define LOGFILE_PATH  ("/var/tmp/aesdsocketdata")
 #endif
 
 
@@ -53,10 +53,6 @@ int file_size = 0;
 //Mutex initialization
 pthread_mutex_t mutex = PTHREAD_MUTEX_INITIALIZER;
 
-#ifdef USE_AESD_CHAR_DEVICE
-sem_t timestamp_semaphore;
-#endif
-
 
 //Signal handler for SIGINT and SIGTERM
 void signal_handler(int sig)
@@ -64,24 +60,17 @@ void signal_handler(int sig)
     if(sig == SIGINT || sig == SIGTERM)
     {
        syslog(LOG_INFO, "Caught SIGINT or SIGTERM. Exiting...");    
-       graceful_exit_handle = true;
-       
-#ifdef USE_AESD_CHAR_DEVICE
-	sem_post(&sem_timestamp);
-#endif
- 
+       graceful_exit_handle = true; 
     }
 }
 
 
-#ifdef USE_AESD_CHAR_DEVICE
+#ifndef USE_AESD_CHAR_DEVICE
 
 //Handles printing timestamp every 10 seconds
 void timestamp_handler(int sig_id)
 {
-    if(sig_id == SIGALRM)
-    {
-    	sem_wait(&sem_timestamp);
+    if(sig_id == SIGALRM){
         //printing timestamp after 10 seconds, when SIGALRM is raised
         int unlock_ret = pthread_mutex_lock(&mutex);
         if(unlock_ret != 0){
@@ -371,7 +360,7 @@ void manage_socket(int socket_t)
         goto exit_socket_t;  
     }
 
-#ifdef USE_AESD_CHAR_DEVICE
+#ifndef USE_AESD_CHAR_DEVICE
     //Create an interval timer for timestamp generation
     struct itimerspec interval_10sec;
 	struct itimerspec previous_interval_time;
@@ -469,10 +458,12 @@ void manage_socket(int socket_t)
     }
 
 exit_label4:
+#ifndef USE_AESD_CHAR_DEVICE
     if(timer_delete(timer) == -1){
         syslog(LOG_ERR, "Error occured during deleting timer = %s. Exiting...", strerror(errno));
         goto exit_filesocket_t; 
     }
+#endif
 
 exit_filesocket_t:
     if(close(file_fd) == -1){
