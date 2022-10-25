@@ -15,10 +15,20 @@
 #include <arpa/inet.h>
 #include <pthread.h>
 #include <time.h>
+#include <semaphore.h>
 
 #define     QUEUE_LENGTH    (10)
-#define     LOGFILE_PATH  ("/var/tmp/aesdsocketdata")
 #define     BUFFER_SIZE   (1024)
+#define     USE_AESD_CHAR_DEVICE 1
+
+#ifdef USE_AESD_CHAR_DEVICE
+#define LOGFILE_PATH ("/dev/aesdchar")
+#else
+#define LOGFILE_PATH  ("/var/tmp/aesdsocketdata")
+#endif
+
+
+
 
 struct thread_t
 {
@@ -50,15 +60,17 @@ void signal_handler(int sig)
     if(sig == SIGINT || sig == SIGTERM)
     {
        syslog(LOG_INFO, "Caught SIGINT or SIGTERM. Exiting...");    
-       graceful_exit_handle = true;
+       graceful_exit_handle = true; 
     }
 }
+
+
+#ifndef USE_AESD_CHAR_DEVICE
 
 //Handles printing timestamp every 10 seconds
 void timestamp_handler(int sig_id)
 {
-    if(sig_id == SIGALRM)
-    {
+    if(sig_id == SIGALRM){
         //printing timestamp after 10 seconds, when SIGALRM is raised
         int unlock_ret = pthread_mutex_lock(&mutex);
         if(unlock_ret != 0){
@@ -120,6 +132,7 @@ mutex_release:
     }
 }
 
+#endif
 
 //Print IP address of client whose connection is accepted
 void accept_connection(struct sockaddr_storage client_address)
@@ -347,6 +360,7 @@ void manage_socket(int socket_t)
         goto exit_socket_t;  
     }
 
+#ifndef USE_AESD_CHAR_DEVICE
     //Create an interval timer for timestamp generation
     struct itimerspec interval_10sec;
 	struct itimerspec previous_interval_time;
@@ -385,6 +399,7 @@ void manage_socket(int socket_t)
         syslog(LOG_ERR, "Error occured in timer_settime() = %s. Exiting...", strerror(errno));
         goto exit_filesocket_t; 
     }
+#endif
 
     //singly linked list setup
     SLIST_HEAD(head_s, thread_t) head;
@@ -443,10 +458,12 @@ void manage_socket(int socket_t)
     }
 
 exit_label4:
+#ifndef USE_AESD_CHAR_DEVICE
     if(timer_delete(timer) == -1){
         syslog(LOG_ERR, "Error occured during deleting timer = %s. Exiting...", strerror(errno));
         goto exit_filesocket_t; 
     }
+#endif
 
 exit_filesocket_t:
     if(close(file_fd) == -1){
@@ -578,3 +595,5 @@ int main(int argc, char **argv)
 
     return 0;
 }
+
+
