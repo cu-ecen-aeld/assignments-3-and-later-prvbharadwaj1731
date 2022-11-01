@@ -364,7 +364,7 @@ void *socket_handle1(void *thread_info)
                 syslog(LOG_ERR, "Error occured while trying to close file = %s. Exiting...\n", strerror(errno));
                 exit(-1);
             }
-#endif;
+#endif
             index = 0;
 
             //Release mutex lock
@@ -498,7 +498,7 @@ void manage_socket(int socket_t)
         new_thread->file_size = &file_size;
         new_thread->mutex = &mutex;
 
-        mempcy((void *) &new_thread->client_address, (const void *) &client_address1, sizeof(struct sockaddr_storage));
+        memcpy((void *) &new_thread->client_address, (const void *) &client_address1, sizeof(struct sockaddr_storage));
 
         common_retval = pthread_create(&new_thread->thread_id, NULL, socket_handle1, (void *) new_thread);
         if(common_retval != 0){
