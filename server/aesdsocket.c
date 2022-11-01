@@ -252,8 +252,8 @@ void *socket_handle1(void *thread_info)
             //Commond for IOCTL seek
             if(strncmp(recv_data, IOCTL_COMMAND, COMMAND_LEN) == 0){
                 struct aesd_seekto seek_to;
-                sscanf(recv_data, "AESDCHAR_IOCSEEKTO:%d,%d", &seekto.write_cmd, &seekto.write_cmd_offset);
-                if(ioctl(file_fd, AESDCHAR_IOCSEEKTO, &seekto))
+                sscanf(recv_data, "AESDCHAR_IOCSEEKTO:%d,%d", &seek_to.write_cmd, &seek_to.write_cmd_offset);
+                if(ioctl(file_fd, AESDCHAR_IOCSEEKTO, &seek_to))
                     syslog(LOG_ERR, "Error occured during ioctl command = %s. Exiting...\n", strerror(errno));
             }
             else{
