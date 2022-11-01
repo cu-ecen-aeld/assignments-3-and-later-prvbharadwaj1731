@@ -15,6 +15,7 @@
 #include <pthread.h>
 #include <time.h>
 #include <semaphore.h>
+#include "aesd_ioctl.h"
 
 #define     QUEUE_LENGTH (10)
 #define     BUFFER_SIZE (1024)
@@ -60,7 +61,7 @@ pthread_mutex_t mutex = PTHREAD_MUTEX_INITIALIZER;
 //Signal handler for SIGINT and SIGTERM
 void signal_handler(int sig)
 {
-    if(sig == SIGINT || sig == SIGID){
+    if(sig == SIGINT || sig == SIGTERM){
         syslog(LOG_INFO, "Caught SIGINT or SIGTERM. Exiting...\n");
         graceful_exit_handle = true;
 #ifndef USE_AESD_CHAR_DEVICE
@@ -249,8 +250,8 @@ void *socket_handle1(void *thread_info)
 
 #endif
             //Commond for IOCTL seek
-            if(strcmp(recv_data, IOCTL_COMMAND, COMMAND_LEN) == 0){
-                struct aesd_seekto seekto;
+            if(strncmp(recv_data, IOCTL_COMMAND, COMMAND_LEN) == 0){
+                struct aesd_seekto seek_to;
                 sscanf(recv_data, "AESDCHAR_IOCSEEKTO:%d,%d", &seekto.write_cmd, &seekto.write_cmd_offset);
                 if(ioctl(file_fd, AESDCHAR_IOCSEEKTO, &seekto))
                     syslog(LOG_ERR, "Error occured during ioctl command = %s. Exiting...\n", strerror(errno));
@@ -588,7 +589,7 @@ int main(int argc, char **argv)
 
     //setup handlers for SIGINT and SIGTERM
     struct sigaction action;
-    action.sa_handler = signalhandler;
+    action.sa_handler = signal_handler;
     action.sa_flags = 0;
     sigset_t empty;
     if(sigemptyset(&empty) == -1){
