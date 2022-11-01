@@ -12,18 +12,17 @@
  */
 
 //linux includes
-#include <linux/syscalls.h>
+
 #include <linux/module.h>
+#include <linux/syscalls.h>
 #include <linux/init.h>
-#include <linux/cdev.h>
 #include <linux/printk.h>
-#include <linux/fs.h>
 #include <linux/types.h>
-
-#include "aesdchar.h"
-#include "aesd_ioctl.h" //for A9
-
+#include <linux/cdev.h>
+#include <linux/fs.h> // file_operations
 #include <asm/uaccess.h>
+#include "aesdchar.h"
+#include "aesd_ioctl.h"
 
 int aesd_major = 0; // use dynamic major
 int aesd_minor = 0;
@@ -214,13 +213,13 @@ loff_t aesd_llseek(struct file *filp, loff_t offset, int mode)
     return return_val;
 }
 
-static long aesd_adjust_file_offset(struct file *filp, unsigned int cmd, unsigned_int cmd_offset)
+static long aesd_adjust_file_offset(struct file *filp, unsigned int cmd, unsigned int cmd_offset)
 {
-    lofft_ offset;
+    loff_t offset;
     long return_val;
 
     //Acquire mutex lock
-    if(mutex_lock_interruptible(aesd_device.lock)){
+    if(mutex_lock_interruptible(&aesd_device.lock)){
         return_val = -EINVAL;
         return return_val;
     }

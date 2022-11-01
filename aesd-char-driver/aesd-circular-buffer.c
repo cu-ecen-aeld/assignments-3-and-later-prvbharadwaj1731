@@ -10,8 +10,9 @@
 
 #ifdef __KERNEL__
 #include <linux/types.h>
+#include <linux/string.h>
 #else
-#include <string.h>
+#include "string.h"
 #include <unistd.h>
 #include <sys/syscall.h>
 #endif
@@ -130,14 +131,17 @@ void aesd_circular_buffer_init(struct aesd_circular_buffer *buffer)
 loff_t aesd_circular_buffer_getoffset(struct aesd_circular_buffer *buffer, unsigned int buff_number, unsigned int buff_offset)
 {
     int buffer_offset = 0;
+    int i;
 
-    if(buff_number > AESDCHAR_MAX_WRITE_OPERATIONS_SUPPORTED - 1)
+    if(buff_number > AESDCHAR_MAX_WRITE_OPERATIONS_SUPPORTED - 1){        
         return -1;
+    }
     //Check if offset requested is greater than size supported
-    if(buff_offset > buffer->entry[buff_number].size - 1)
+    if(buff_offset > buffer->entry[buff_number].size - 1){
         return -1;
+    }
 
-    for(int i=0; i<buff_number; i++)
+    for(i=0; i<buff_number; i++)
     {
         if(buffer->entry[i].size == 0) //no buffer loaded, size 0
             return -1;
