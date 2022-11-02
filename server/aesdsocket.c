@@ -242,7 +242,7 @@ void *socket_handle1(void *thread_info)
                 }
 
 #else           
-                file_fd = open(LOGFILE_PATH, O_CREAT | O_RDWR | O_TRUNC, 0777);
+                file_fd = open(LOGFILE_PATH, O_CREAT | O_RDWR | O_TRUNC, 0666);
                 if(file_fd == -1){
                     syslog(LOG_ERR, "Error occured creating and opening logfile = %s. Exiting...\n", strerror(errno));
                     goto exit_label3;
@@ -262,7 +262,7 @@ void *socket_handle1(void *thread_info)
                 char *write_ptr = recv_data;
                 while(write_len != 0){
                     bytes_written = write(file_fd, write_ptr, write_len);
-                    if(bytes_written != -1){
+                    if(bytes_written == -1){
                         if(errno == EINTR){
                             //release mutex lock
                             common_retval = pthread_mutex_unlock(thread_data->mutex);
