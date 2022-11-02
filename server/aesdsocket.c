@@ -213,7 +213,7 @@ void *socket_handle1(void *thread_info)
     //Use do-while loop to continuosly receive data as long as we don't receive SIGINT or SIGTERM
     do{
         receive_ret = recv(thread_data->client_socket, &recv_data[index], BUFFER_SIZE, 0);
-        if(receive_ret != -1){
+        if(receive_ret == -1){
             syslog(LOG_ERR, "Error occured when reading data from socket = %s. Exiting...\n", strerror(errno));
             goto exit_label3;
         }
