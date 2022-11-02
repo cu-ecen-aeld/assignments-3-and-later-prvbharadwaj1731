@@ -9,12 +9,9 @@
  */
 
 #ifdef __KERNEL__
-#include <linux/types.h>
 #include <linux/string.h>
 #else
-#include "string.h"
-#include <unistd.h>
-#include <sys/syscall.h>
+#include <string.h>
 #endif
 
 #include "aesd-circular-buffer.h"
@@ -29,52 +26,59 @@
  * @return the struct aesd_buffer_entry structure representing the position described by char_offset, or
  * NULL if this position is not available in the buffer (not enough data is written).
  */
-
 struct aesd_buffer_entry *aesd_circular_buffer_find_entry_offset_for_fpos(struct aesd_circular_buffer *buffer,
             size_t char_offset, size_t *entry_offset_byte_rtn )
 {
-    bool elem_found = false;
+    bool found = false;
     uint8_t index;
-    struct aesd_buffer_entry *entry_ret = NULL;
+    struct aesd_buffer_entry *ret = NULL;
+    int i = 0;
 
-    //Check input for validity
-    if(!entry_offset_byte_rtn || !buffer)
+    //Frist check pointers are valid
+    if(!buffer || !entry_offset_byte_rtn)
         return NULL;
 
     index = buffer->out_offs;
-    int i = 0; //iterator for element entry
-    //Check buffer to be full or not
+
+
+    //If the list is full, AESDCHAR_MAX_WRITE_OPERATIONS_SUPPORTED is the max length
     if(buffer->full)
-        i = AESDCHAR_MAX_WRITE_OPERATIONS_SUPPORTED; //set this to max length
-    else{
-        //check for wraparound logic
-        if(buffer->in_offs > buffer->out_offs)
-            i = AESDCHAR_MAX_WRITE_OPERATIONS_SUPPORTED - buffer->in_offs + buffer->out_offs + 1;
-        else if(buffer->in_offs < buffer->out_offs) //standard case
-            i = buffer->out_offs - buffer->in_offs;
+        i = AESDCHAR_MAX_WRITE_OPERATIONS_SUPPORTED;
+    //If not full, count how many steps does the out_off need to take to meet with in_off
+    else
+    {
+        if(buffer->in_offs < buffer->out_offs)
+            i = AESDCHAR_MAX_WRITE_OPERATIONS_SUPPORTED - buffer->out_offs + buffer->in_offs + 1;
+        else if(buffer->out_offs < buffer->in_offs)
+            i = buffer->in_offs - buffer->out_offs;
         else
-            return NULL;
+        {
+             return NULL; //List is empty
+        }
+           
     }
 
-
-    //Now with length set and an element available, enqueue it
-    while(!elem_found && i){
-        //Check element size
-        if(buffer->entry[index].size >= char_offset + 1){
-            entry_ret = &buffer->entry[index];
+    while(i && !found)
+    {
+        //Check if the current element's size meets the offset requested
+        if(buffer->entry[index].size >= char_offset + 1)
+        {
+            //We found the element to be returned
+            ret = &buffer->entry[index];
+            //The offset within the element is "char_offset"
             *entry_offset_byte_rtn = char_offset;
-            elem_found = true;
+            found = true;
         }
+        //If doesn't fit, subtract the size of the buffer checked
         else
             char_offset -= buffer->entry[index].size;
 
-        i--; //Now length reduced by 1
+        i--;
         index++;
-        //wraparound logic for index if it exceeds AESDCHAR_MAX_WRITE_OPERATIONS_SUPPORTED
-        index = index % AESDCHAR_MAX_WRITE_OPERATIONS_SUPPORTED;
+        index %= AESDCHAR_MAX_WRITE_OPERATIONS_SUPPORTED;
     }
 
-    return entry_ret;
+    return ret;
 }
 
 /**
@@ -86,34 +90,34 @@ struct aesd_buffer_entry *aesd_circular_buffer_find_entry_offset_for_fpos(struct
 */
 const char *aesd_circular_buffer_add_entry(struct aesd_circular_buffer *buffer, const struct aesd_buffer_entry *add_entry)
 {
-    const char *add_entry_ret = NULL;
+    const char *ret = NULL;
+    //Check inputs
     if(!buffer || !add_entry)
-        return add_entry_ret;
+        return ret;
 
-    //Check if buffer is full
-    if(buffer->full){
-        add_entry_ret = buffer->entry[buffer->out_offs].buffptr;
+    //Increment read pointer, if the list is full
+    else if(buffer->full)
+    {
+        ret = buffer->entry[buffer->out_offs].buffptr;
         buffer->full_size -= buffer->entry[buffer->out_offs].size;
-        buffer->out_offs++; //move out pointer by 1
-
-        //Check for wraparound for pointer        
-        buffer->out_offs = buffer->out_offs % AESDCHAR_MAX_WRITE_OPERATIONS_SUPPORTED;
+        buffer->out_offs++;
+        buffer->out_offs %= AESDCHAR_MAX_WRITE_OPERATIONS_SUPPORTED;
+        
     }
 
-    //Actually add the new element to the buffer
+    //This three lines are always performed
     buffer->entry[buffer->in_offs].size = add_entry->size;
     buffer->entry[buffer->in_offs].buffptr = add_entry->buffptr;
     buffer->full_size += add_entry->size;
     buffer->in_offs++;
+    //Make sure that offsets are within bounds
+    buffer->in_offs %= AESDCHAR_MAX_WRITE_OPERATIONS_SUPPORTED;
 
-    //Another check for wraparound of pointer
-    buffer->in_offs = buffer->in_offs % AESDCHAR_MAX_WRITE_OPERATIONS_SUPPORTED;
-
-    //Check if buffer is full
-    if(buffer->in_offs == buffer->out_offs) //Full condition
+    //Check if the list has become full
+    if(buffer->in_offs == buffer->out_offs)
         buffer->full = true;
 
-    return add_entry_ret;
+    return ret;
 }
 
 /**
@@ -124,32 +128,31 @@ void aesd_circular_buffer_init(struct aesd_circular_buffer *buffer)
     memset(buffer,0,sizeof(struct aesd_circular_buffer));
 }
 
-
 #ifdef __KERNEL__
-
-//loff_t is a 64-bit signed data type used to support large file offset seeks
+/**
+* Returns the absolute offset from a buffer number + offset combination
+*/
 loff_t aesd_circular_buffer_getoffset(struct aesd_circular_buffer *buffer, unsigned int buff_number, unsigned int buff_offset)
 {
-    int buffer_offset = 0;
     int i;
+    int offset = 0;
 
-    if(buff_number > AESDCHAR_MAX_WRITE_OPERATIONS_SUPPORTED - 1){        
+    if(buff_number > AESDCHAR_MAX_WRITE_OPERATIONS_SUPPORTED - 1)
         return -1;
-    }
-    //Check if offset requested is greater than size supported
-    if(buff_offset > buffer->entry[buff_number].size - 1){
+
+    if(buff_offset > buffer->entry[buff_number].size - 1)
         return -1;
-    }
 
     for(i=0; i<buff_number; i++)
     {
-        if(buffer->entry[i].size == 0) //no buffer loaded, size 0
+        if(buffer->entry[i].size == 0)
+        {
+            //Not enough buffers loaded into the circular buffer
             return -1;
-        
-        buffer_offset += buffer->entry[i].size;
+        }
+        offset += buffer->entry[i].size;
     }
-
-    return buffer_offset + buff_offset;    
+    return (offset + buff_offset);
 }
-
 #endif
+

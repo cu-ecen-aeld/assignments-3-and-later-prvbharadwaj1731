@@ -30,9 +30,11 @@ struct aesd_dev
 {
     struct aesd_circular_buffer buffer;
     struct mutex lock;
-    struct cdev cdev;     /*Char device structure*/
-    char *data_partial;
-    int size_partial;
+    struct cdev cdev;     /* Char device structure      */
+
+    //Partial writes control
+    char *partial_content;
+    int partial_size;
 };
 
 
