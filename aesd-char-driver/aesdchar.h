@@ -3,7 +3,7 @@
  *
  *  Created on: Oct 23, 2019
  *      Author: Dan Walkes
-*/
+ */
 
 #ifndef AESD_CHAR_DRIVER_AESDCHAR_H_
 #define AESD_CHAR_DRIVER_AESDCHAR_H_
@@ -28,18 +28,14 @@
 
 struct aesd_dev
 {
-    /**
-     * TODO: Add structure(s) and locks needed to complete assignment requirements
-     */
     struct aesd_circular_buffer buffer;
     struct mutex lock;
-    
-    int size_partial;
-    char *data_partial;
-
     struct cdev cdev;     /* Char device structure      */
+
+    //Partial writes control
+    char *partial_content;
+    int partial_size;
 };
 
 
 #endif /* AESD_CHAR_DRIVER_AESDCHAR_H_ */
-

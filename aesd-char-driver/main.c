@@ -12,44 +12,39 @@
  */
 
 #include <linux/module.h>
+#include <linux/syscalls.h>
 #include <linux/init.h>
 #include <linux/printk.h>
 #include <linux/types.h>
 #include <linux/cdev.h>
 #include <linux/fs.h> // file_operations
-#include "aesdchar.h"
-#include <linux/syscalls.h>
 #include <asm/uaccess.h>
+#include "aesdchar.h"
+#include "aesd_ioctl.h"
 
 int aesd_major =   0; // use dynamic major
 int aesd_minor =   0;
 
-MODULE_AUTHOR("Pranav Bharadwaj"); /** TODO: fill in your name **/
+MODULE_AUTHOR("Pranav Bharadwaj");
 MODULE_LICENSE("Dual BSD/GPL");
 
 struct aesd_dev aesd_device;
 
 int aesd_open(struct inode *inode, struct file *filp)
 {
-    PDEBUG("open");
-    /**
-     * TODO: handle open
-     */
-    //Increment device use count by a process
+    //Handle open
+    PDEBUG("open\n");
     try_module_get(THIS_MODULE);
-     
+
     return 0;
 }
 
 int aesd_release(struct inode *inode, struct file *filp)
 {
-    PDEBUG("release");
-    /**
-     * TODO: handle release
-     */
-    //Decrement device use count by a process
-    module_put(THIS_MODULE); 
-    
+    //Handle release
+    PDEBUG("release\n");
+    module_put(THIS_MODULE);
+
     return 0;
 }
 
@@ -57,175 +52,279 @@ ssize_t aesd_read(struct file *filp, char __user *buf, size_t count,
                 loff_t *f_pos)
 {
     ssize_t retval = 0;
-    PDEBUG("read %zu bytes with offset %lld",count,*f_pos);
-    /**
-     * TODO: handle read
-     */
-    size_t entry_pos = 0;
-    struct aesd_buffer_entry *entry_ptr = NULL;
+    size_t  entry_offset = 0;
+    struct aesd_buffer_entry *entry = NULL;
+    PDEBUG("read %zu bytes with offset %lld\n",count,*f_pos);
     
-    //acquire mutex lock
-    mutex_lock(&aesd_device.lock);
+    //"count" is the number of bytes to be returned
+    //"f_pos" is the offset from where to start the read
 
-    //get position in buffer for input element
-    entry_ptr = aesd_circular_buffer_find_entry_offset_for_fpos(&aesd_device.buffer, *f_pos, &entry_pos);
-    if(entry_ptr == NULL){
-        PDEBUG("Error while accessing circular buffer to read. Exiting...\n");
-        //release mutex lock
+    //Set mutex
+    if(mutex_lock_interruptible(&aesd_device.lock))
+    {
+        retval = -EINTR;
+        return retval;
+    }
+
+    //Get the entry corresponding to the request
+    entry = aesd_circular_buffer_find_entry_offset_for_fpos(&aesd_device.buffer, *f_pos, &entry_offset);
+    //Check for the results
+    if(!entry)
+    {
+        PDEBUG("Access to aesdchar is returning without contents read\n");
         mutex_unlock(&aesd_device.lock);
-        //refresh all pointers and return values
         *f_pos = 0;
         retval = 0;
         return retval;
     }
-
-    //check how many spaces left and only copy as much as that
-    //To do this, we need to copy data from kernelspace to userspace. This is accomplished using the copy_to_user()
-    if(entry_pos + count >= entry_ptr->size){
-        int copy_ret = copy_to_user(buf, &entry_ptr->buffptr[entry_pos], entry_ptr->size - entry_pos);
-        if(copy_ret != 0){
-            PDEBUG("Error occured while copying data from kernelspace to userspace. Exiting...\n");
-            //release mutex_lock;
+    //Copy from entry offset, "count" or size
+    if(entry_offset + count >= entry->size)
+    {
+        //Copy only until the size
+        if(copy_to_user(buf, &entry->buffptr[entry_offset],  entry->size - entry_offset) != 0)
+        {
+            PDEBUG("Could not copy memory to the user\n");
             mutex_unlock(&aesd_device.lock);
             retval = -EINVAL;
             return retval;
         }
-
-        //set position of file pointer
-        *f_pos += entry_ptr->size;
-        retval = entry_ptr->size - entry_pos;
-    }else{
-        int copy_ret = copy_to_user(buf, &entry_ptr->buffptr[entry_pos], count);
-        if(copy_ret != 0){
-            PDEBUG("Error occured while copying data from kernelspace to userspace. Exiting...\n");
-            //release mutex lock
+        *f_pos = *f_pos + entry->size - entry_offset;
+        retval = entry->size - entry_offset;
+    }
+    else
+    {
+        //Copy until the count
+        //Copy only until the size
+        if(copy_to_user(buf, &entry->buffptr[entry_offset],  count) != 0)
+        {
+            PDEBUG("Could not copy memory to the user\n");
             mutex_unlock(&aesd_device.lock);
             retval = -EINVAL;
             return retval;
         }
-
-        //set position of file pointer
-        *f_pos += count;
-        retval  = count;
+        *f_pos = *f_pos + count;
+        retval = count;
     }
 
-    //release mutex lock
+    //Release mutex
     mutex_unlock(&aesd_device.lock);
-     
+
     return retval;
 }
 
 ssize_t aesd_write(struct file *filp, const char __user *buf, size_t count,
                 loff_t *f_pos)
 {
-    ssize_t retval = -ENOMEM;
-    PDEBUG("write %zu bytes with offset %lld",count,*f_pos);
-    /**
-     * TODO: handle write
-     */
-    const char *free_ptr = NULL;
+    ssize_t retval = 0;
+    const char *to_be_freed = NULL;
+    PDEBUG("write %zu bytes with offset %lld\n",count,*f_pos);
+    
 
-    //check validity of input data
-    if(!filp || !buf){
-        PDEBUG ("Error occured with input data to aesd_write. Exiting...\n");
+    //Check filp and buf validity
+    if(!filp || !buf)
+    {
+        PDEBUG("Could not reallocate a temporary command\n");
+        retval = -EINVAL;
+        return retval;
     }
-    if(!count){
-        PDEBUG("Error occured during write, attempting to write 0 bytes. Exiting...\n");
+
+    //Check that the count is not 0
+    if(!count)
+    {
+        PDEBUG("Attempt to write 0 bytes\n");
         retval = 0;
         return retval;
     }
 
-    //acquire mutex lock
-    mutex_lock(&aesd_device.lock);
+    //Set mutex
+    if(mutex_lock_interruptible(&aesd_device.lock))
+    {
+        retval = -EINTR;
+        return retval;
+    }
 
-    //Partial write check
-    if(aesd_device.size_partial){
-
-        //reallocate memory for the partial write
-        aesd_device.data_partial = krealloc(aesd_device.data_partial, sizeof(char)*(aesd_device.size_partial + count), GFP_KERNEL);
-        if(aesd_device.data_partial == NULL){
-            PDEBUG("Error occured while reallocating memory. Exiting...\n");
-            //release mutex_lock
+    //Check if there is a partial write active
+    if(aesd_device.partial_size)
+    {
+        aesd_device.partial_content = krealloc(aesd_device.partial_content, 
+                                              sizeof(char)*(aesd_device.partial_size + count), GFP_KERNEL); 
+        if(!aesd_device.partial_content)
+        {
+            PDEBUG("Could not reallocate a temporary command\n");
             mutex_unlock(&aesd_device.lock);
-            retval = -EINVAL;
+            retval = -ENOMEM;
             return retval;
         }
     }
-
-    //allocate space for normal write
-    else{
-        aesd_device.data_partial = kmalloc(sizeof(char)*count, GFP_KERNEL);
-        if(aesd_device.data_partial == NULL){
-            PDEBUG("Error occured while allocating memory. Exiting...\n");
-            //release mutex lock
+    //If not, allocate temporary space
+    else
+    {
+        aesd_device.partial_content = kmalloc(sizeof(char)*count, GFP_KERNEL);
+        if(!aesd_device.partial_content)
+        {
+            PDEBUG("Could not allocate a temporary command\n");
             mutex_unlock(&aesd_device.lock);
-            retval = -EINVAL;
+            retval = -ENOMEM;
             return retval;
         }
     }
-
-    //To check if input has \n in between data
-    while(count != 0){
-        //manually copy byte by byte to userspace
-        get_user(aesd_device.data_partial[aesd_device.size_partial], &buf[retval]);
+    
+    //Check every value in the entry and commit if '\n' is found
+    while(count)
+    {
+        get_user(aesd_device.partial_content[aesd_device.partial_size], &buf[retval]);
         retval++;
-        aesd_device.size_partial++;
+        aesd_device.partial_size++;
         count--;
 
-        //check if the byte copied == \n
-        if(aesd_device.data_partial[aesd_device.size_partial - 1] == '\n'){
-            //create new entry into buffer for remaining data
-            struct aesd_buffer_entry new_entry;
-
-            //allocate space for remaining data
-            new_entry.buffptr = kmalloc(sizeof(char)*aesd_device.size_partial, GFP_KERNEL);
-            if(new_entry.buffptr == NULL){
-                PDEBUG("Error occured while allocating memory for writing data after whitespace was encountered. Exiting...");
-                //release mutex lock
+        //Check if the copied byte is as '\n'
+        if(aesd_device.partial_content[aesd_device.partial_size - 1] == '\n')
+        {
+            //Create the new entry
+            struct aesd_buffer_entry entry;
+            entry.buffptr = kmalloc(sizeof(char)*aesd_device.partial_size, GFP_KERNEL);
+            if(!entry.buffptr)
+            {
+                PDEBUG("Not enough memory available\n");
                 mutex_unlock(&aesd_device.lock);
                 retval = -ENOMEM;
                 return retval;
             }
-            new_entry.size = aesd_device.size_partial;
+            entry.size = aesd_device.partial_size;
 
-            //copy contents into this new entry in buffer and call aesd_circular_buffer_add_entry
-            memcpy((void *)new_entry.buffptr, aesd_device.data_partial, aesd_device.size_partial);
-            free_ptr = aesd_circular_buffer_add_entry(&aesd_device.buffer, &new_entry);
-            if(free_ptr == NULL){
-                //Call free if entry cannot be added and reset free_ptr
-                kfree(free_ptr);
-                free_ptr = NULL;
+            //Copy the contents inside the entry
+            memcpy((void *)entry.buffptr, aesd_device.partial_content, aesd_device.partial_size);
+
+            //Add the entry to the buffer
+            to_be_freed = aesd_circular_buffer_add_entry(&aesd_device.buffer, &entry);
+            //Check if a buffer needs to be freed
+            if(to_be_freed)
+            {
+                kfree(to_be_freed);
+                to_be_freed = NULL;
             }
-            //free partial data stored in aesd_device and reset size_partial
-            kfree(aesd_device.data_partial);
-            aesd_device.size_partial = 0;
 
-            if(count != 0){
-                aesd_device.data_partial = kmalloc(sizeof(char)*count, GFP_KERNEL);
-                if(aesd_device.data_partial == NULL){
-                    PDEBUG("Error occured while allocating memory for remaining data after whitespace. Exiting...");
-                    //release mutex lock
+            //Free the partial contents
+            kfree(aesd_device.partial_content);
+            aesd_device.partial_size = 0;
+            //Malloc again the remaining count
+            if(count)
+            {
+                aesd_device.partial_content = kmalloc(sizeof(char)*count, GFP_KERNEL);
+                if(!aesd_device.partial_content)
+                {
+                    PDEBUG("Could not allocate a temporary command\n");
                     mutex_unlock(&aesd_device.lock);
                     retval = -ENOMEM;
                     return retval;
                 }
             }
-        
-
         }
     }
 
-    //Release mutex lock
+    //Release mutex
     mutex_unlock(&aesd_device.lock);
 
     return retval;
 }
+
+loff_t aesd_llseek(struct file *filp, loff_t offset, int mode)
+{
+    loff_t retval;
+
+    //Check filp and buf validity
+    if(!filp)
+    {
+        PDEBUG("llseek requested without a valid filp\n");
+        retval = -EINVAL;
+        return retval;
+    }
+    
+    if(mutex_lock_interruptible(&aesd_device.lock))
+    {
+        retval = -EINTR;
+        return retval;
+    }
+
+    retval = fixed_size_llseek(filp, offset, mode, aesd_device.buffer.full_size);
+
+    PDEBUG("lseek return value: %lld; offset: %lld;",retval,offset);
+    if(retval == -EINVAL)
+    {
+        PDEBUG("llseek requested with an invalid offset\n");
+    }
+
+    mutex_unlock(&aesd_device.lock);
+    
+    return retval;
+}
+
+static long aesd_adjust_file_offset(struct file *filp,unsigned int write_cmd, unsigned int write_cmd_offset)
+{
+    loff_t offset;
+    long retval;
+
+    if(mutex_lock_interruptible(&aesd_device.lock))
+    {
+        retval = -EINTR;
+        return retval;
+    }
+
+    offset = aesd_circular_buffer_getoffset(&aesd_device.buffer, write_cmd, write_cmd_offset);
+    PDEBUG("Adjusting offset to %lld. Requested buffer number: %d; Requested offset: %d",offset, write_cmd, write_cmd_offset);
+
+    if(offset == -1)
+        retval = -EINVAL;
+    else
+    {
+        filp->f_pos = offset;
+        retval = 0;
+    }
+    mutex_unlock(&aesd_device.lock);
+
+    return retval;
+}
+
+
+long aesd_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
+{
+    long retval = 0;
+    struct aesd_seekto seekto;
+
+    if(_IOC_TYPE(cmd) != AESD_IOC_MAGIC) 
+        return -EINVAL;
+
+    if(_IOC_NR(cmd) > AESDCHAR_IOC_MAXNR) 
+        return -EINVAL;
+
+    switch(cmd)
+    {
+    case AESDCHAR_IOCSEEKTO:
+        if(copy_from_user(&seekto,(const void __user *)arg,sizeof(struct aesd_seekto))!=0)
+        {
+            retval = -EFAULT;
+        } 
+        else
+        {
+            retval = aesd_adjust_file_offset(filp,seekto.write_cmd, seekto.write_cmd_offset);
+        }
+        break;
+    default:
+        retval = -ENOTTY;
+        break;
+    }
+
+    return retval;
+}
+
 struct file_operations aesd_fops = {
     .owner =    THIS_MODULE,
     .read =     aesd_read,
     .write =    aesd_write,
     .open =     aesd_open,
     .release =  aesd_release,
+    .llseek =   aesd_llseek,
+    .unlocked_ioctl = aesd_ioctl,
 };
 
 static int aesd_setup_cdev(struct aesd_dev *dev)
@@ -237,7 +336,7 @@ static int aesd_setup_cdev(struct aesd_dev *dev)
     dev->cdev.ops = &aesd_fops;
     err = cdev_add (&dev->cdev, devno, 1);
     if (err) {
-        printk(KERN_ERR "Error %d adding aesd cdev", err);
+        printk(KERN_ERR "Error %d adding aesd cdev\n", err);
     }
     return err;
 }
@@ -257,12 +356,9 @@ int aesd_init_module(void)
     }
     memset(&aesd_device,0,sizeof(struct aesd_dev));
 
-    /**
-     * TODO: initialize the AESD specific portion of the device
-     */
-
-    //Initialize mutex
+    //After memsetting the struct, the mutex needs to be initialized
     mutex_init(&aesd_device.lock);
+    //The partial writes pointer will be used within the write operations
 
     result = aesd_setup_cdev(&aesd_device);
 
@@ -279,10 +375,7 @@ void aesd_cleanup_module(void)
 
     cdev_del(&aesd_device.cdev);
 
-    /**
-     * TODO: cleanup AESD specific poritions here as necessary
-     */
-    //destroy mutex
+    //Destroy the mutex
     mutex_destroy(&aesd_device.lock);
 
     unregister_chrdev_region(devno, 1);
@@ -292,4 +385,3 @@ void aesd_cleanup_module(void)
 
 module_init(aesd_init_module);
 module_exit(aesd_cleanup_module);
-

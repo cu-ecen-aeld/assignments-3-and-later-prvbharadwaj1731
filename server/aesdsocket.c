@@ -1,4 +1,3 @@
-/*Assignment 6 aesdsocket implementation*/
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -16,123 +15,144 @@
 #include <pthread.h>
 #include <time.h>
 #include <semaphore.h>
+#include "aesd_ioctl.h"
 
-#define     QUEUE_LENGTH    (10)
-#define     BUFFER_SIZE   (1024)
-#define     USE_AESD_CHAR_DEVICE 1
+#define     QUEUE_LENGTH (10)
+#define     BUFFER_SIZE (1024)
+#define     USE_AESD_CHAR_DEVICE 
 
 #ifdef USE_AESD_CHAR_DEVICE
 #define LOGFILE_PATH ("/dev/aesdchar")
 #else
-#define LOGFILE_PATH  ("/var/tmp/aesdsocketdata")
+#define LOGFILE_PATH ("/var/tmp/aesdsocket")
 #endif
 
+//A9 changesfor IOCTL commands
+#define IOCTL_COMMAND ("AESDCHAR_IOCSEEKTO:")
+#define COMMAND_LEN (19)
 
-
-
-struct thread_t
-{
+struct thread_t{
     pthread_t thread_id;
-    int client_socket_t;
-    int server_socket_t;
-    int logfile_fd;
+    int client_socket;
+    int server_socket;
+
     pthread_mutex_t *mutex;
+
     bool complete;
     int *file_size;
+    
     struct sockaddr_storage client_address;
 
-    //singly linked list node 
     SLIST_ENTRY(thread_t) node;
 };
 
 //Global variables
-bool graceful_exit_handle = false;
 int file_fd = 0;
 int file_size = 0;
+bool graceful_exit_handle = false;
+
+#ifndef USE_AESD_CHAR_DEVICE
+sem_t timestamp_sem;
+#endif
 
 //Mutex initialization
 pthread_mutex_t mutex = PTHREAD_MUTEX_INITIALIZER;
 
-
 //Signal handler for SIGINT and SIGTERM
 void signal_handler(int sig)
 {
-    if(sig == SIGINT || sig == SIGTERM)
-    {
-       syslog(LOG_INFO, "Caught SIGINT or SIGTERM. Exiting...");    
-       graceful_exit_handle = true; 
+    if(sig == SIGINT || sig == SIGTERM){
+        syslog(LOG_INFO, "Caught SIGINT or SIGTERM. Exiting...\n");
+        graceful_exit_handle = true;
+#ifndef USE_AESD_CHAR_DEVICE
+        sem_post(&timestamp_sem);
+#endif
     }
 }
 
-
 #ifndef USE_AESD_CHAR_DEVICE
 
-//Handles printing timestamp every 10 seconds
-void timestamp_handler(int sig_id)
+void sigalrm_handler(int sig)
 {
-    if(sig_id == SIGALRM){
-        //printing timestamp after 10 seconds, when SIGALRM is raised
-        int unlock_ret = pthread_mutex_lock(&mutex);
-        if(unlock_ret != 0){
-            syslog(LOG_ERR, "Error occured during mutex lock = %s. Exiting...", strerror(errno));
-            exit(-1);  
+    if(sig == SIGALRM){
+        sem_post(&timestamp_sem); //semaphore set
+    }
+}
+
+void *timestamp_handler(void *sig_id)
+{
+    while(graceful_exit_handle == false){
+        
+        //Check if semaphore is set by SIGALRM
+        sem_wait(&timestamp_sem)
+        
+        int common_retval;
+        //Acquire mutex_lock
+        common_retval = pthread_mutex_lock(&mutex);
+        if(common_retval != 0){
+            syslog(LOG_ERR, "Error occured while acquiring mutex lock = %s. Exiting...\n", strerror(errno));
+            exit(-1);
         }
 
-        //Get the timestamp
-        char timestamp[256];
+        char timestamp_str[200];
         time_t curr_time;
         struct tm *t2;
 
         curr_time = time(NULL);
         t2 = localtime(&curr_time);
-        if (t2 == NULL){
-            syslog(LOG_ERR, "Error occured during localtime(). Exiting...");
-            goto mutex_release; 
+        if(t2 == NULL){
+            syslog(LOG_ERR, "Error occured while obtaining localtime = %s. Exiting...\n", strerror(errno));
+            goto release_mutex_lock:
         }
-        strcpy(timestamp, "timestamp:");
-        strftime(&timestamp[10], sizeof(timestamp) - 10, "%a, %d %b %Y %T %z", t2);
-        char *timestamp_buffer = malloc(sizeof(char) * strlen(timestamp) + 2);
-        if(!timestamp_buffer){
-            syslog(LOG_ERR, "Error occured during malloc() for timestamp = %s. Exiting...", strerror(errno));
-            goto mutex_release; 
+        strcpy(timestamp_str, "timestamp:");
+        strftime(&timestamp_str[10], sizeof(timestamp_str) - 10, "%a, %d %b %Y %T %z", t2);
+        char *timestamp_buffer = malloc(sizeof(char)*strlen(timestamp_str) + 2);
+        if(timestamp_buffer == NULL){
+            syslog(LOG_ERR, "Error occured during malloc for timestamp = %s. Exiting...\n", strerror(errno));
+            goto release_mutex_lock;
         }
-        sprintf(timestamp_buffer, "%s%s", timestamp, "\n");
 
-        if(lseek(file_fd, 0, SEEK_END) == -1){
-            syslog(LOG_ERR, "Error occured during lseek() to EOF = %s. Exiting...", strerror(errno));
-            goto exit_label1; 
+        sprintf(timestamp_buffer, "%s%s", timestamp_str, "\n");
+
+        common_retval = lseek(file_fd, 0, SEEK_END);
+        if(common_retval == -1){
+            syslog(LOG_ERR, "Error occured during lseek to beginning of file = %s. Exiting...\n", strerror(errno));
+            goto exit_all;
         }
-        
-        int written_bytes;
-        int len_to_write = strlen(timestamp_buffer);
-        char *ptr_to_write = timestamp_buffer;
-        while(len_to_write != 0){
-            written_bytes = write(file_fd, ptr_to_write, len_to_write);
-            if(written_bytes == -1){
-                if(errno == EINTR)
+
+        int bytes_written;
+        int write_len = strlen(timestamp_buffer);
+        char *write_ptr = timestamp_buffer; //pointed to timestamp
+        while(bytes_written != 0){
+            bytes_written = write(file_fd, write_ptr, write_len);
+            if(bytes_written == -1){
+                if(errno == EINTR)//received interrupt
                     continue;
-
-                syslog(LOG_ERR, "Error occured during write() = %s. Exiting...", strerror(errno));
-                goto exit_label1; 
+                
+                syslog(LOG_ERR, "Error occured during writing timestamp to file = %s. Exiting...\n", strerror(errno));
+                goto exit_all;
             }
-            len_to_write -= written_bytes;
-            ptr_to_write += written_bytes; 
+            write_len -= bytes_written;
+            write_ptr += bytes_written;
         }
-
         file_size += strlen(timestamp_buffer);
 
-exit_label1:
-        free(timestamp_buffer);
+exit_all:
+    free(timestamp_buffer);
 mutex_release:
-        unlock_ret = pthread_mutex_unlock(&mutex);
-        if(unlock_ret != 0){
-            syslog(LOG_ERR, "Error occured during mutex lock release = %s. Exiting...", strerror(errno));
-            exit(-1); 
-        }
+
+    //Release mutex lock
+    common_retval = pthread_mutex_unlock(&mutex);
+    if(common_retval != 0){
+        syslog(LOG_ERR, "Error occured while releasing mutex in timestamp handler = %s. Exiting...\n", strerror(common_retval));
+        exit(-1)
     }
+    }
+return NULL;
 }
 
 #endif
+
 
 //Print IP address of client whose connection is accepted
 void accept_connection(struct sockaddr_storage client_address)
@@ -168,315 +188,394 @@ void closed_connection(struct sockaddr_storage client_address)
     }
 }
 
-//Handle a client that we accepeted from a socket connection
+
+//Receieve data from client whose connection has been accepted, handling creation of threads for each client
 void *socket_handle1(void *thread_info)
 {
-    struct thread_t *thread_data = (struct thread_t *) thread_info;
+    struct thread_t *thread_data = (struct thread_t *)thread_info;
 
-    //Print IP
+    //Call print accepted connection
     accept_connection(thread_data->client_address);
 
-    int recv_ret;
-    int index = 0;
-    //Keep track of number of BUFFER_SIZE receive_blocks "recv_data" has
-    int receive_blocks = 1;
-    
+    int receive_ret, index;
+    int common_retval;
+    index = 0;
+
+    //Keep track of number of BUFFER_SIZE receieve_blocks "recv_data" has
+    int receive_blocks = 1; //initial value 1
+
     char *recv_data = malloc(sizeof(char)*BUFFER_SIZE*receive_blocks);
     if(!recv_data){
-        syslog(LOG_ERR, "Error occured during malloc() in recv = %s. Exiting...", strerror(errno));
-        goto exit_label2; 
+        syslog(LOG_ERR, "Error occured during malloc() in recv_data = %s. Exiting...\n", strerror(errno));
+        goto exit_label2;
     }
 
-    //Receive data from client and store in file continuously till EOP is received
+    //Use do-while loop to continuosly receive data as long as we don't receive SIGINT or SIGTERM
     do{
-        recv_ret = recv(thread_data->client_socket_t, &recv_data[index], BUFFER_SIZE, 0);
-        if(recv_ret == -1){
-            syslog(LOG_ERR, "Error occured during recv() while reading from socket = %s. Exiting...", strerror(errno));
-            goto exit_label3;  
+        receive_ret = recv(thread_data->client_socket, &recv_data[index], BUFFER_SIZE, 0);
+        if(receive_ret == -1){
+            syslog(LOG_ERR, "Error occured when reading data from socket = %s. Exiting...\n", strerror(errno));
+            goto exit_label3;
         }
-        index += recv_ret;
+        index += receive_ret;
 
+        //If we successfully receieved data, parse it
         if(index != 0){
-            //Check if EOP "\n" is received
-            if(recv_data[index - 1] == '\n'){
-                //Lock mutex for writing into file
-                int lock_ret = pthread_mutex_lock(thread_data->mutex);
-                if(lock_ret != 0){
-                    syslog(LOG_ERR, "Error occured during mutex lock = %s. Exiting...", strerror(errno));
-                    goto exit_label3;  
+            //Check for whitespace
+            if(recv_data[index-1] == '\n'){
+                //Acquire mutex lock
+                common_retval = pthread_mutex_lock(thread_data->mutex);;
+                if(common_retval != 0){
+                    syslog(LOG_ERR, "Error occured while acquiring mutex lock = %s. Exiting...\n", strerror(errno));
+                    goto exit_label3;
                 }
 
-                //Write to logfile         
-                if(lseek(thread_data->logfile_fd, 0, SEEK_END) == -1){
-                    syslog(LOG_ERR, "Error occured during lseek() to EOF = %s. Exiting...", strerror(errno));
-                    int unlock_ret = pthread_mutex_unlock(thread_data->mutex);
-                    if(unlock_ret != 0){
-                        syslog(LOG_ERR, "Error occured during mutex lock release = %s. Exiting...", strerror(errno));
-                    }
-                    goto exit_label3;  
+#ifndef USE_AESD_CHAR_DEVICE
+                if(lseek(file_fd, 0, SEEK_END) == -1){
+                    syslog(LOG_ERR, "Error occured trying to reach EOF = %s. Exiting...\n", strerror(errno));
+                    //Release mutex lock
+                    common_retval = pthread_mutex_unlock(thread_data->mutex);
+                    if(common_retval != 0)
+                        syslog(LOG_ERR, "Error occured during releasing mutex lock = %s. Exiting..\n", strerror(errno));
+
+                    goto exit_label3;
                 }
 
-                int written_bytes;
-                int len_to_write = index;
-                char *ptr_to_write = recv_data;
-                while(len_to_write != 0){
-                    written_bytes = write(thread_data->logfile_fd, ptr_to_write, len_to_write);
-                    if(written_bytes == -1){
-                        if(errno == EINTR){ //User gave Ctrl+C
-                            int unlock_ret = pthread_mutex_unlock(thread_data->mutex);
-                            if(unlock_ret != 0){
-                                syslog(LOG_ERR, "Error occured during mutex lock release in write() = %s. Exiting...", strerror(errno));
-                            }
-                            continue;
-                        }
-
-                        syslog(LOG_ERR, "Error occured during write() = %s. Exiting...", strerror(errno));
-                        int unlock_ret = pthread_mutex_unlock(thread_data->mutex);
-                        if(unlock_ret != 0){
-                            syslog(LOG_ERR, "Error occured during mutex lock release in write() = %s. Exiting...", strerror(errno));
-                        }
-                        goto exit_label3; 
-                    }
-                    len_to_write -= written_bytes;
-                    ptr_to_write += written_bytes; 
+#else           
+                file_fd = open(LOGFILE_PATH, O_CREAT | O_RDWR | O_TRUNC, 0777);
+                if(file_fd == -1){
+                    syslog(LOG_ERR, "Error occured creating and opening logfile = %s. Exiting...\n", strerror(errno));
+                    goto exit_label3;
                 }
 
-                *thread_data->file_size = *thread_data->file_size + index;
-
-                //Send all the contents from logfile to client
-                if(lseek(thread_data->logfile_fd, 0, SEEK_SET) == -1){
-                    syslog(LOG_ERR, "Error occured during lseek() to start of file = %s. Exiting...", strerror(errno));
-                    int unlock_ret = pthread_mutex_unlock(thread_data->mutex);
-                    if(unlock_ret != 0){
-                        syslog(LOG_ERR, "Error occured during mutex lock release in lseek() to start of file = %s. Exiting...", strerror(errno));
-                    }
-                    goto exit_label3; 
-                }
-                
-                //Send data back to client 
-                int to_be_sent = *thread_data->file_size;
-                char buff_read[BUFFER_SIZE];
-    
-                while(to_be_sent){
-                    int send_bytes = 0;
-                    int read_bytes = read(thread_data->logfile_fd, buff_read, BUFFER_SIZE);
-                    if(read_bytes != 0)
-                        send_bytes = read_bytes;
-
-                    if(read_bytes == -1){
+#endif
+            //Commond for IOCTL seek
+            if(strncmp(recv_data, IOCTL_COMMAND, COMMAND_LEN) == 0){
+                struct aesd_seekto seek_to;
+                sscanf(recv_data, "AESDCHAR_IOCSEEKTO:%d,%d", &seek_to.write_cmd, &seek_to.write_cmd_offset);
+                if(ioctl(file_fd, AESDCHAR_IOCSEEKTO, &seek_to))
+                    syslog(LOG_ERR, "Error occured during ioctl command = %s. Exiting...\n", strerror(errno));
+            }
+            else{
+                int bytes_written;
+                int write_len = index;
+                char *write_ptr = recv_data;
+                while(write_len != 0){
+                    bytes_written = write(file_fd, write_ptr, write_len);
+                    if(bytes_written != -1){
                         if(errno == EINTR){
-                            int unlock_ret = pthread_mutex_unlock(thread_data->mutex);
-                            if(unlock_ret != 0){
-                                syslog(LOG_ERR, "Error occured during mutex lock release in read() = %s. Exiting...", strerror(errno));
+                            //release mutex lock
+                            common_retval = pthread_mutex_unlock(thread_data->mutex);
+                            if(common_retval != 0){
+                                syslog(LOG_ERR, "Error occured while releasing mutex = %s. Exiting...\n", strerror(errno));                            
                             }
                             continue;
                         }
 
-                        syslog(LOG_ERR, "Error occured during read() = %s. Exiting...", strerror(errno));
-                        int unlock_ret = pthread_mutex_unlock(thread_data->mutex);
-                        if(unlock_ret != 0){
-                            syslog(LOG_ERR, "Error occured during mutex lock release after read() = %s. Exiting...", strerror(errno));
-                        }
-                        goto exit_label3; 
+                        syslog(LOG_ERR, "Error occured while writing to file = %s. Exiting...\n", strerror(errno));
+                        //Release mutex lock
+                        common_retval = pthread_mutex_unlock(thread_data->mutex);
+                        if(common_retval != 0)
+                            syslog(LOG_ERR, "Error occured while releasing mutex lock = %s. Exiting...\n", strerror(errno));
+
+                        goto exit_label3;
                     }
-                    to_be_sent -= read_bytes;
-                    
-                    int sent_bytes = -1;
-                    int send_off = 0;
-                    while(sent_bytes != 0){
-                        sent_bytes = send(thread_data->client_socket_t, &buff_read[send_off], send_bytes, 0);
-                        if(sent_bytes == -1){
-                            if(errno == EINTR){
-                                int unlock_ret = pthread_mutex_unlock(thread_data->mutex);
-                                if(unlock_ret != 0){
-                                    syslog(LOG_ERR, "Error occured during mutex lock release in send() = %s. Exiting...", strerror(errno));
-                                }
-                                continue;
-                            }
 
-                            syslog(LOG_ERR, "Error occured during send() = %s. Exiting...", strerror(errno));
-                            int unlock_ret = pthread_mutex_unlock(thread_data->mutex);
-                            if(unlock_ret != 0){
-                                syslog(LOG_ERR, "Error occured during mutex lock release after send() = %s. Exiting...", strerror(errno));
-                            }
-                            goto exit_label3; 
+                    write_len -= bytes_written;
+                    write_ptr += bytes_written;
+                }
+
+                *thread_data->file_size += index;
+            }
+
+#ifndef USE_AESD_CHAR_DEVICE
+            //Go to beginning of file
+            if(lseek(file_fd, 0, SEEK_SET) == -1){
+                syslog(LOG_ERR, "Error occured moving file pointer to beginning of file = %s. Exiting...\n", strerror(errno));
+                //Release mutex lock
+                common_retval = pthread_mutex_unlock(thread_data->mutex);
+                if(common_retval != 0){
+                    syslog(LOG_ERR, "Error occured while releasing mutex lock = %s. Exiting...\n", strerror(errno));
+                }
+                goto exit_label3;
+            }
+#endif
+
+
+            //Send data back to client by reading from file
+            int send_len = *thread_data->file_size;
+            int bytes_read = 1;
+            char read_buffer[BUFFER_SIZE];
+
+            while(send_len && bytes_read){
+                int bytes_send = 0;
+                bytes_read = read(file_fd, read_buffer, BUFFER_SIZE);
+                if(bytes_read != 0)
+                    bytes_send = bytes_read;
+
+                if(bytes_read == -1){
+                    if(errno == EINTR){
+                        //release mutex lock
+                        common_retval = pthread_mutex_unlock(thread_data->mutex);
+                        if(common_retval != 0)
+                            syslog(LOG_ERR, "Error occured while releasing mutex lock = %s. Exiting...\n", strerror(errno));
+
+                        continue;
+                    }
+
+                    syslog(LOG_ERR, "Error occured while reading from file = %s. Exiting...\n", strerror(errno));
+                    common_retval = pthread_mutex_unlock(thread_data->mutex);
+                    if(common_retval != 0)
+                        syslog(LOG_ERR, "Error occured while releasing mutex lock = %s. Exiting...\n", strerror(errno));
+
+                    goto exit_label3;
+                }
+
+                send_len -= bytes_read;
+
+                int bytes_sent = -1;
+                int send_offset = 0;
+                while(bytes_sent != 0){
+                    bytes_sent = send(thread_data->client_socket, &read_buffer[send_offset], bytes_send, 0);
+                    if(bytes_sent == -1){
+                        if(errno == EINTR){
+                            common_retval = pthread_mutex_unlock(thread_data->mutex);
+                            if(common_retval != 0)
+                                syslog(LOG_ERR, "Error occured while releasing mutex lock = %s. Exiting...\n", strerror(errno));
+
+                            continue;
                         }
-                        send_bytes -= sent_bytes;
-                        send_off += sent_bytes;
-                    }                    
-                }
 
-                //Reset index 
-                index = 0;
-                //Free mutex
-                int unlock_ret = pthread_mutex_unlock(thread_data->mutex);
-                if(unlock_ret != 0){
-                    syslog(LOG_ERR, "Error occured during mutex lock release = %s. Exiting...", strerror(errno));
-                    goto exit_label3; 
+                        syslog(LOG_ERR, "Error occured sending data client after being read from file = %s. Exiting...\n", strerror(errno));
+                        common_retval = pthread_mutex_unlock(thread_data->mutex);
+                        if(common_retval != 0)
+                            syslog(LOG_ERR, "Error occured while releasing mutex lock = %s. Exiting...\n", strerror(errno));
+
+                        goto exit_label3;
+                    }
+                    bytes_send -= bytes_sent;
+                    send_offset += bytes_sent;
                 }
+            }
+
+#ifdef USE_AESD_CHAR_DEVICE
+
+            if(close(file_fd) == -1){
+                syslog(LOG_ERR, "Error occured while trying to close file = %s. Exiting...\n", strerror(errno));
+                exit(-1);
+            }
+#endif
+            index = 0;
+
+            //Release mutex lock
+            common_retval = pthread_mutex_unlock(thread_data->mutex);
+            if(common_retval != 0){
+                syslog(LOG_ERR, "Error occured while releasing mutex lock = %s. Exiting...\n", strerror(errno));
+                goto exit_label3;
+            }
+
             }
             else if(index == (BUFFER_SIZE*receive_blocks)){
                 receive_blocks++;
                 recv_data = realloc(recv_data, sizeof(char)*BUFFER_SIZE*receive_blocks);
                 if(!recv_data){
-                    syslog(LOG_ERR, "Error occured during realloc() = %s. Exiting...", strerror(errno));
-                    goto exit_label3; 
+                    syslog(LOG_ERR, "Error occured during realloc = %s. Exiting...\n", strerror(errno));
+                    goto exit_label3;
                 }
-            }
+            }           
         }
-
-    } while(recv_ret != 0 && !graceful_exit_handle); //Handle received data until we recieve Ctrl+C from user or EOP
+    }while(receive_ret != 0 && !graceful_exit_handle);
 
 exit_label3:
     free(recv_data);
+
 exit_label2:
-    if(recv_ret != 0){
-        if(close(thread_data->client_socket_t) == -1){
-            syslog(LOG_ERR, "Error occured during socket close = %s. Exiting...", strerror(errno));
+    if(receive_ret != 0){
+        if(close(thread_data->client_socket) == -1){
+            syslog(LOG_ERR, "Error occured closing socket = %s. Exiting...\n", strerror(errno));
             exit(-1);
         }
     }
+
     thread_data->complete = true;
     closed_connection(thread_data->client_address);
     return NULL;
 }
 
 
-/*Listen on socket, set itimer to 10 seconds for printing timestamp, and create linked list to store 
-socket data from different threads
-*/
+//Handle socket, listen to incoming connections, create linked list to store socket data and called socket_handle1
 void manage_socket(int socket_t)
 {
+    int common_retval;
+
     if(listen(socket_t, QUEUE_LENGTH) == -1){
-        syslog(LOG_ERR, "Error occured during socket listen = %s. Exiting...", strerror(errno));
-        return;        
+        syslog(LOG_ERR, "Error occured during socket listen = %s. Exiting...\n", strerror(errno));
+        return;
     }
 
-    syslog(LOG_INFO, "Listening on port 9000");
-
-    file_fd = open(LOGFILE_PATH, O_CREAT | O_RDWR | O_TRUNC, 0666);
-    if(file_fd == -1){
-        syslog(LOG_ERR, "Error occured during logfile create = %s. Exiting...", strerror(errno));
-        goto exit_socket_t;  
-    }
+    syslog(LOG_INFO, "Listening on port 9000\n");
 
 #ifndef USE_AESD_CHAR_DEVICE
-    //Create an interval timer for timestamp generation
-    struct itimerspec interval_10sec;
-	struct itimerspec previous_interval_time;
 
-    timer_t timer = 0;
-	int timer_ret = timer_create(CLOCK_REALTIME, NULL, &timer);
-	if(timer_ret == -1){
-        syslog(LOG_ERR, "Error occured during timer create() = %s. Exiting...", strerror(errno));
-        goto exit_label4; 
+    file_fd = open(LOGFILE_PATH, O_CREAT | O_RDWR | O_TRUNC, 0777);
+    if(file_fd == -1){
+        syslog(LOG_ERR, "Error occured during logfile creationg = %s. Exiting...\n", strerror(errno));
+        goto exit_socket;
     }
-		
-	struct sigaction action;
-    action.sa_handler = timestamp_handler;
+
+    struct itimerspec time_interval, previous_time_interval;
+    timer_t timer = 0;
+    common_retval = timer_create(CLOCK_REALTIME, NULL, &timer);
+    if(common_retval == -1){
+        syslog(LOG_ERR, "Error occured while creating timer = %s. Exiting...\n", strerror(errno));
+        goto exit_label4;
+    }
+
+    struct sigaction action;
+    action.sa_handler = sigalrm_handler;
     action.sa_flags = 0;
     sigset_t empty;
     if(sigemptyset(&empty) == -1){
-        syslog(LOG_ERR, "Error occured during setting empty signal = %s. Exiting...", strerror(errno));
-        goto exit_filesocket_t; 
+        syslog(LOG_ERR, "Error occured setting up empty set = %s. Exiting...\n", strerror(errno));
+        goto exit_filesocket;
     }
+
     action.sa_mask = empty;
-
-    //Set handler for SIGALRM
     if(sigaction(SIGALRM, &action, NULL) == -1){
-        syslog(LOG_ERR, "Error occured during setting handler to SIGALRM = %s. Exiting...", strerror(errno));
-        goto exit_filesocket_t;
+        syslog(LOG_ERR, "Error occured setting up new handle for SIGALRM = %s. Exiting...\n", strerror(errno));
+        goto exit_filesocket;
     }
 
-	//Arm timer
-	interval_10sec.it_interval.tv_sec = 10;
-	interval_10sec.it_interval.tv_nsec = 0;
-	interval_10sec.it_value.tv_sec = 10;
-	interval_10sec.it_value.tv_nsec = 0;
+    time_interval.it_interval.tv_sec = 10;
+    time_interval.it_interval.tv_nsec = 0;
+	time_interval.it_value.tv_sec = 10;
+	time_interval.it_value.tv_nsec = 0;
 
-	int settime_ret = timer_settime(timer, 0, &interval_10sec, &previous_interval_time);
-	if(settime_ret){
-        syslog(LOG_ERR, "Error occured in timer_settime() = %s. Exiting...", strerror(errno));
-        goto exit_filesocket_t; 
+    common_retval = timer_settime(timer, 0, &time_interval, &previous_time_interval);
+    if(common_retval){
+        syslog(LOG_ERR, "Error occured while setting timer = %s. Exiting...\n", strerror(errno));
+        goto exit_filesocket;
+    }
+
+    //Start semaphore for timestamp
+    if(sem_init(&timestamp_sem, 0, 0) == -1){
+        syslog(LOG_ERR, "Error occured setting up timestamp = %s. Exiting...\n", strerror(errno));
+        goto exit_filesocket2;
+    }
+
+    pthread_t timestamp_thread;
+    common_retval = pthread_create(&timestap_thread, NULL);
+    if(common_retval != 0){
+        syslog(LOG_ERR, "Error occured during thread creation = %s. Exiting...\n", strerror(errno));
+        goto exit_label4;
     }
 #endif
 
-    //singly linked list setup
+    //initialize linked list
     SLIST_HEAD(head_s, thread_t) head;
     SLIST_INIT(&head);
 
     while(!graceful_exit_handle){
-        struct sockaddr_storage client_address;
-        socklen_t addr_size = sizeof client_address;
+        struct sockaddr_storage client_address1;
+        socklen_t addr_size = sizeof client_address1;
 
-        //conn accept
-        int conn_fd = accept(socket_t, (struct sockaddr *) &client_address, &addr_size);
+        //Accept connection
+        int conn_fd = accept(socket_t, (struct sockaddr *)&client_address1, &addr_size);
         if(conn_fd == -1){
-            if(errno == EINTR){
+            if(errno == EINTR)
                 continue;
-            }
             else{
-                syslog(LOG_ERR, "Error occured during accept() = %s. Exiting...", strerror(errno));
+                syslog(LOG_ERR, "Error occured while accepting new conneciton = %s. Exiting...\n", strerror(errno));
                 continue;
             }
         }
 
+        //allocate memory for new thread
         struct thread_t *new_thread = malloc(sizeof(struct thread_t));
-        new_thread->client_socket_t = conn_fd;
-        new_thread->complete = 0;
-        new_thread->server_socket_t = socket_t;
-        new_thread->logfile_fd = file_fd;
+        new_thread->client_socket = conn_fd;
+        new_thread->complete = false;
+        new_thread->server_socket = socket_t;
         new_thread->file_size = &file_size;
         new_thread->mutex = &mutex;
-        memcpy((void *)&new_thread->client_address, (const void *)&client_address, sizeof(struct sockaddr_storage));
-        
-        int thread_create_ret = pthread_create(&new_thread->thread_id, NULL, socket_handle1, (void *) new_thread);
-        if(thread_create_ret!= 0){            
-            syslog(LOG_ERR, "Error occured creating new thread = %s. Exiting...", strerror(errno));
-            continue; 
-        }
-        //Add the thread data to singly linked list
-        SLIST_INSERT_HEAD(&head, new_thread, node);
-    }
 
-    while(!SLIST_EMPTY(&head)){
+        memcpy((void *) &new_thread->client_address, (const void *) &client_address1, sizeof(struct sockaddr_storage));
+
+        common_retval = pthread_create(&new_thread->thread_id, NULL, socket_handle1, (void *) new_thread);
+        if(common_retval != 0){
+            syslog(LOG_ERR, "Error occured while creating new thread = %s. Exiting...\n", strerror(errno));
+            continue;
+        }
+
+        SLIST_INSERT_HEAD(&head, new_thread, node);
+
         struct thread_t *elem = NULL;
-        struct thread_t *tmp = NULL;
-        SLIST_FOREACH_SAFE(elem, &head, node, tmp)
-        {
+        struct thread_t *temp = NULL;
+
+        SLIST_FOREACH_SAFE(elem, &head, node, temp){
             if(elem->complete){
                 SLIST_REMOVE(&head, elem, thread_t, node);
-                //join thread
-                int thread_join_ret = pthread_join(elem->thread_id, NULL);
-                if(thread_join_ret != 0){
-                    syslog(LOG_ERR, "Error occured during thread join = %s. Exiting...", strerror(errno));
-                    continue;  
+                //Join thread
+                common_retval = pthread_join(elem->thread_id, NULL);
+                if(common_retval != 0){
+                    syslog(LOG_ERR, "Error occured while joining thread = %s. Exiting...\n", strerror(errno));
+                    continue;
                 }
+
                 free(elem);
             }
         }
     }
 
-exit_label4:
-#ifndef USE_AESD_CHAR_DEVICE
-    if(timer_delete(timer) == -1){
-        syslog(LOG_ERR, "Error occured during deleting timer = %s. Exiting...", strerror(errno));
-        goto exit_filesocket_t; 
-    }
-#endif
+    while(!SLIST_EMPTY(&head)){
+        struct thread_t *elem, *temp = NULL;
+        SLIST_FOREACH_SAFE(elem, &head, node, temp)
+        {
+            if(elem->complete){
+                SLIST_REMOVE(&head, elem, thread_t, node);
+                common_retval = pthread_join(elem->thread_id, NULL);
+                if(common_retval != 0){
+                    syslog(LOG_ERR, "Error occured while joining thread = %s. Exiting...\n", strerror(errno));
+                    continue;
+                }
 
-exit_filesocket_t:
+                free(elem);
+            }
+        }
+
+    }
+
+
+#ifndef USE_AESD_CHAR_DEVICE
+    common_retval = pthread_join(timestamp_thread, NULL);
+    if(common_retval != 0)
+        syslog(LOG_ERR, "Error occured while joining thread = %s. Exiting...\n", strerror(errno));
+
+exit_label4:
+    if(sem_destroy(&timestamp_sem) == -1)
+        syslog(LOG_ERR, "Error occured while destroying semaphore = %s. Exiting...\n", strerror(errno));
+
+exit_filesocket2:
+    common_retval = timer_delete(timer);
+    if(common_retval == -1){
+        syslog(LOG_ERR, "Error occured while destroying timer = %s. Exiting...\n", strerror(errno));
+        goto exit_filesocket;
+    }
+
+exit_filesocket:
     if(close(file_fd) == -1){
-        syslog(LOG_ERR, "Error occured during file close = %s. Exiting...", strerror(errno));
+        syslog(LOG_ERR, "Error occured while closing logfile = %s. Exiting...\n", strerror(errno));
         exit(-1);
     }
+
     if(remove(LOGFILE_PATH) == -1){
-        syslog(LOG_ERR, "Error occured deleting logfile = %s. Exiting...", strerror(errno));
+        syslog(LOG_ERR, "Error occured while removing logfile = %s. Exiting...\n", strerror(errno));
         exit(-1);
     }
-exit_socket_t:
+
+exit_socket:
+#endif
     if(close(socket_t) == -1){
-        syslog(LOG_ERR, "Error occured during socket close = %s. Exiting...", strerror(errno));
+        syslog(LOG_ERR, "Error occured while closing socket = %s. Exiting...\n", strerror(errno));
     }
 
     return;
@@ -484,37 +583,30 @@ exit_socket_t:
 
 
 
-//Main routine, receives user input for daemon mode or normal mode
 int main(int argc, char **argv)
 {
-
-    //Initialze system logging facility under LOG_USER
     openlog(NULL, 0, LOG_USER);
 
-    //Set up the signals handler
+    //setup handlers for SIGINT and SIGTERM
     struct sigaction action;
     action.sa_handler = signal_handler;
     action.sa_flags = 0;
     sigset_t empty;
     if(sigemptyset(&empty) == -1){
-        syslog(LOG_ERR, "Error occured setting empty signal %s.", strerror(errno));
-        exit(-1); 
+        syslog(LOG_ERR, "Error occured setting up empty signal = %s. Exiting...\n", strerror(errno));
+        exit(-1);
     }
     action.sa_mask = empty;
-
-    //Set handler for SIGINT
     if(sigaction(SIGINT, &action, NULL) == -1){
-        syslog(LOG_ERR, "Error occured setting up handler for SIGINT = %s. Exiting...", strerror(errno));
+        syslog(LOG_ERR, "Error occured setting up handler for SIGINT. Exiting...\n");
         exit(-1);
     }
-
-    //Set handler for SIGTERM
     if(sigaction(SIGTERM, &action, NULL) == -1){
-        syslog(LOG_ERR, "Error occured setting up handler for SIGTERM = %s. Exiting...", strerror(errno));
+        syslog(LOG_ERR, "Error occured setting up handler for SIGTERM. Exiting...\n");
         exit(-1);
     }
 
-    //bind socket to port and address
+     //bind socket to port and address
     struct addrinfo hints;
     struct addrinfo *res;
 
@@ -592,8 +684,5 @@ int main(int argc, char **argv)
         syslog(LOG_ERR, "Call application as aesdsocket for NORMAL mode, and aesdsocket -d for DAEMON mode");
         exit(-1);
     } 
-
     return 0;
 }
-
-
